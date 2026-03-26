@@ -36,6 +36,14 @@
         font-size: 24px;
         font-weight: 700;
       }
+      .logout {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
@@ -43,9 +51,41 @@
         padding: 16px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
       }
+      .history {
+        margin-top: 16px;
+        background: #0b1220;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 12px;
+      }
+      .history-item {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .history-item.found {
+        background: rgba(34, 197, 94, 0.08);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .history-item:last-child {
+        border-bottom: none;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 11px;
+        margin-left: 6px;
+        background: #1f2937;
+      }
+      .badge.found { background: #14532d; color: #86efac; }
+      .badge.not_found { background: #7f1d1d; color: #fecaca; }
+      .badge.error { background: #7f1d1d; color: #fecaca; }
+      .badge.cancelled { background: #1f2937; color: #e5e7eb; }
       .grid {
         display: grid;
-        grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto;
+        grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto auto;
         gap: 12px;
         align-items: end;
       }
@@ -120,6 +160,9 @@
     <div class="container">
       <div class="header">
         <div class="title">AKTU DOB Finder Live</div>
+        <form method="post" action="/logout">
+          <button class="logout" type="submit">Logout</button>
+        </form>
       </div>
 
       <div class="panel">
@@ -145,6 +188,10 @@
             <input id="endMonth" type="number" min="1" max="12" value="12" />
           </div>
           <div>
+            <label for="concurrency">Concurrency</label>
+            <input id="concurrency" type="number" min="1" max="3" value="2" />
+          </div>
+          <div>
             <button id="startBtn">Start</button>
           </div>
           <div>
@@ -158,6 +205,10 @@
 
         <div class="result" id="result">Result: —</div>
         <div class="log" id="log"></div>
+        <div class="history" id="history">
+          <strong>Recent Searches</strong>
+          <div id="historyList"></div>
+        </div>
       </div>
     </div>
 
@@ -169,12 +220,14 @@
       const resultEl = document.getElementById('result');
       const startBtn = document.getElementById('startBtn');
       const stopBtn = document.getElementById('stopBtn');
+      const historyListEl = document.getElementById('historyList');
 
       const rollNumberEl = document.getElementById('rollNumber');
       const startYearEl = document.getElementById('startYear');
       const endYearEl = document.getElementById('endYear');
       const startMonthEl = document.getElementById('startMonth');
       const endMonthEl = document.getElementById('endMonth');
+      const concurrencyEl = document.getElementById('concurrency');
 
       const appendLog = (line) => {
         logEl.textContent += line + "\\n";
@@ -189,7 +242,8 @@
           startYear: Number(startYearEl.value),
           endYear: Number(endYearEl.value),
           startMonth: Number(startMonthEl.value),
-          endMonth: Number(endMonthEl.value)
+          endMonth: Number(endMonthEl.value),
+          concurrency: Number(concurrencyEl.value)
         });
       });
       stopBtn.addEventListener('click', () => socket.emit('stop'));
@@ -221,6 +275,30 @@
       socket.on('error', (message) => {
         appendLog(`ERROR: ${message}`);
         resultEl.innerHTML = `<span class="error">Error: ${message}</span>`;
+      });
+
+      socket.on('history', (items) => {
+        historyListEl.innerHTML = '';
+        (items || []).forEach((item) => {
+          const started = item.startedAt ? new Date(item.startedAt).toLocaleString() : '';
+          const label = item.status || 'unknown';
+          const badge = `<span class="badge ${label}">${label.replace('_', ' ')}</span>`;
+          const line = document.createElement('div');
+          line.className = item.status === 'found' ? 'history-item found' : 'history-item';
+          const resultLine = item.result
+            ? `<div>Result: ${item.result.name} | ${item.result.applicationNumber} | ${item.result.dob || ''}</div>`
+            : '';
+          line.innerHTML = `
+            <div>
+              <strong>${item.rollNumber}</strong>
+              ${badge}
+            </div>
+            <div>${item.startMonth}/${item.startYear} - ${item.endMonth}/${item.endYear}</div>
+            ${resultLine}
+            <div>${started}</div>
+          `;
+          historyListEl.appendChild(line);
+        });
       });
     </script>
   </body>

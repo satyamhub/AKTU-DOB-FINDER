@@ -17,6 +17,7 @@ async function main(rollNumbers: string[]) {
           endYear: 2006,
           startMonth: 7,
           endMonth: 12,
+          concurrency: 2,
           usePlaywright: USE_PLAYWRIGHT
         },
         (message) => console.log(message)
