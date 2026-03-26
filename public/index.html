@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AKTU DOB Finder Live</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #22c55e;
+        --danger: #ef4444;
+        --border: #1f2937;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: radial-gradient(1200px 700px at 10% 10%, #1e293b, #0f172a);
+        color: var(--text);
+      }
+      .container {
+        max-width: 1100px;
+        margin: 24px auto;
+        padding: 0 16px;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .title {
+        font-size: 24px;
+        font-weight: 700;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto;
+        gap: 12px;
+        align-items: end;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #0b1220;
+        color: var(--text);
+        font-size: 14px;
+      }
+      button {
+        padding: 11px 16px;
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #06210f;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        margin-top: 12px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .status .running {
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .status .stopped {
+        color: var(--danger);
+        font-weight: 700;
+      }
+      .log {
+        margin-top: 16px;
+        background: #0b1220;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        height: 420px;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+      .result {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #0b1220;
+        border: 1px solid var(--border);
+        font-size: 14px;
+      }
+      .error {
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="title">AKTU DOB Finder Live</div>
+      </div>
+
+      <div class="panel">
+        <div class="grid">
+          <div>
+            <label for="rollNumber">Roll Number</label>
+            <input id="rollNumber" placeholder="e.g. 2501921520352" />
+          </div>
+          <div>
+            <label for="startYear">Start Year</label>
+            <input id="startYear" type="number" value="2004" />
+          </div>
+          <div>
+            <label for="endYear">End Year</label>
+            <input id="endYear" type="number" value="2006" />
+          </div>
+          <div>
+            <label for="startMonth">Start Month</label>
+            <input id="startMonth" type="number" min="1" max="12" value="1" />
+          </div>
+          <div>
+            <label for="endMonth">End Month</label>
+            <input id="endMonth" type="number" min="1" max="12" value="12" />
+          </div>
+          <div>
+            <button id="startBtn">Start</button>
+          </div>
+          <div>
+            <button id="stopBtn" disabled>Stop</button>
+          </div>
+        </div>
+
+        <div class="status" id="status">
+          Status: <span class="stopped">Idle</span>
+        </div>
+
+        <div class="result" id="result">Result: —</div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const logEl = document.getElementById('log');
+      const statusEl = document.getElementById('status');
+      const resultEl = document.getElementById('result');
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+
+      const rollNumberEl = document.getElementById('rollNumber');
+      const startYearEl = document.getElementById('startYear');
+      const endYearEl = document.getElementById('endYear');
+      const startMonthEl = document.getElementById('startMonth');
+      const endMonthEl = document.getElementById('endMonth');
+
+      const appendLog = (line) => {
+        logEl.textContent += line + "\\n";
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      startBtn.addEventListener('click', () => {
+        logEl.textContent = '';
+        resultEl.textContent = 'Result: —';
+        socket.emit('start', {
+          rollNumber: rollNumberEl.value,
+          startYear: Number(startYearEl.value),
+          endYear: Number(endYearEl.value),
+          startMonth: Number(startMonthEl.value),
+          endMonth: Number(endMonthEl.value)
+        });
+      });
+      stopBtn.addEventListener('click', () => socket.emit('stop'));
+
+      socket.on('status', ({ running }) => {
+        statusEl.innerHTML = running
+          ? 'Status: <span class="running">Running</span>'
+          : 'Status: <span class="stopped">Idle</span>';
+        startBtn.disabled = running;
+        stopBtn.disabled = !running;
+      });
+
+      socket.on('log', (message) => appendLog(message));
+
+      socket.on('result', (result) => {
+        if (result) {
+          resultEl.innerHTML = `
+            <strong>Result</strong><br />
+            Name: ${result.name}<br />
+            Roll: ${result.applicationNumber}<br />
+            DOB: ${result.dob || ''}<br />
+            SGPA: ${(result.sgpaValues || []).join(', ')}
+          `;
+        } else {
+          resultEl.textContent = 'Result: Not found';
+        }
+      });
+
+      socket.on('error', (message) => {
+        appendLog(`ERROR: ${message}`);
+        resultEl.innerHTML = `<span class="error">Error: ${message}</span>`;
+      });
+    </script>
+  </body>
+</html>
