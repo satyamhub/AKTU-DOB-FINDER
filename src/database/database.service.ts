@@ -1,6 +1,7 @@
 import { MongoClient, Db } from 'mongodb';
 import { MONGO_DB_URI } from '../config';
 import { Student, SearchHistory } from '../interfaces';
+import { ObjectId } from 'mongodb';
 
 let database: Db | null = null;
 export const client = new MongoClient(MONGO_DB_URI); 
@@ -47,13 +48,26 @@ export class DatabaseService {
     await collection.insertOne(record);
   }
 
-  static async listSearchHistory(limit = 20): Promise<SearchHistory[]> {
+  static async listSearchHistory(limit = 20, user?: string): Promise<SearchHistory[]> {
     const db = await DatabaseService.connectToDatabase();
     const collection = db.collection<SearchHistory>('search_history');
+    const query = user ? { user } : {};
     return collection
-      .find({})
+      .find(query)
       .sort({ startedAt: -1 })
       .limit(limit)
       .toArray();
+  }
+
+  static async getSearchHistoryById(id: string): Promise<SearchHistory | null> {
+    const db = await DatabaseService.connectToDatabase();
+    const collection = db.collection<SearchHistory>('search_history');
+    return collection.findOne({ _id: new ObjectId(id) } as any);
+  }
+
+  static async listStudents(): Promise<Student[]> {
+    const db = await DatabaseService.connectToDatabase();
+    const collection = db.collection<Student>('students');
+    return collection.find({}).toArray();
   }
 }

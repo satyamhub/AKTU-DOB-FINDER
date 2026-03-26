@@ -44,6 +44,21 @@
         border-radius: 8px;
         cursor: pointer;
       }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .export {
+        background: #0b1220;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        text-decoration: none;
+        font-size: 13px;
+      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
@@ -59,6 +74,15 @@
         padding: 12px;
         font-size: 12px;
       }
+      .history-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
       .history-item {
         padding: 8px 0;
         border-bottom: 1px solid var(--border);
@@ -70,6 +94,16 @@
       }
       .history-item:last-child {
         border-bottom: none;
+      }
+      .resume-btn {
+        margin-top: 6px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #0b1220;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
       }
       .badge {
         display: inline-block;
@@ -83,6 +117,7 @@
       .badge.not_found { background: #7f1d1d; color: #fecaca; }
       .badge.error { background: #7f1d1d; color: #fecaca; }
       .badge.cancelled { background: #1f2937; color: #e5e7eb; }
+      .badge.invalid { background: #7f1d1d; color: #fecaca; }
       .grid {
         display: grid;
         grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto auto;
@@ -122,6 +157,24 @@
         font-size: 14px;
         color: var(--muted);
       }
+      .progress {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .progress-bar {
+        margin-top: 6px;
+        height: 8px;
+        background: #0b1220;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #22c55e, #86efac);
+      }
       .status .running {
         color: var(--accent);
         font-weight: 700;
@@ -160,9 +213,12 @@
     <div class="container">
       <div class="header">
         <div class="title">AKTU DOB Finder Live</div>
-        <form method="post" action="/logout">
-          <button class="logout" type="submit">Logout</button>
-        </form>
+        <div class="toolbar">
+          <a class="export" href="/export">Export CSV</a>
+          <form method="post" action="/logout">
+            <button class="logout" type="submit">Logout</button>
+          </form>
+        </div>
       </div>
 
       <div class="panel">
@@ -202,11 +258,19 @@
         <div class="status" id="status">
           Status: <span class="stopped">Idle</span>
         </div>
+        <div class="progress" id="progressText">Progress: —</div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
 
         <div class="result" id="result">Result: —</div>
         <div class="log" id="log"></div>
         <div class="history" id="history">
           <strong>Recent Searches</strong>
+          <div class="history-controls">
+            <input id="foundOnly" type="checkbox" />
+            <label for="foundOnly">Show found only</label>
+          </div>
           <div id="historyList"></div>
         </div>
       </div>
@@ -221,6 +285,9 @@
       const startBtn = document.getElementById('startBtn');
       const stopBtn = document.getElementById('stopBtn');
       const historyListEl = document.getElementById('historyList');
+      const progressTextEl = document.getElementById('progressText');
+      const progressFillEl = document.getElementById('progressFill');
+      const foundOnlyEl = document.getElementById('foundOnly');
 
       const rollNumberEl = document.getElementById('rollNumber');
       const startYearEl = document.getElementById('startYear');
@@ -234,9 +301,42 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
+      const renderHistory = (items) => {
+        const foundOnly = foundOnlyEl.checked;
+        historyListEl.innerHTML = '';
+        (items || []).forEach((item) => {
+          if (foundOnly && item.status !== 'found') return;
+          const started = item.startedAt ? new Date(item.startedAt).toLocaleString() : '';
+          const label = item.status || 'unknown';
+          const badge = `<span class="badge ${label}">${label.replace('_', ' ')}</span>`;
+          const line = document.createElement('div');
+          line.className = item.status === 'found' ? 'history-item found' : 'history-item';
+          const resultLine = item.result
+            ? `<div>Result: ${item.result.name} | ${item.result.applicationNumber} | ${item.result.dob || ''}</div>`
+            : '';
+          const resumeBtn =
+            item.status === 'cancelled' && item.lastProgress
+              ? `<button class="resume-btn" data-id="${item.id}">Continue</button>`
+              : '';
+          line.innerHTML = `
+            <div>
+              <strong>${item.rollNumber}</strong>
+              ${badge}
+            </div>
+            <div>${item.startMonth}/${item.startYear} - ${item.endMonth}/${item.endYear}</div>
+            ${resultLine}
+            ${resumeBtn}
+            <div>${started}</div>
+          `;
+          historyListEl.appendChild(line);
+        });
+      };
+
       startBtn.addEventListener('click', () => {
         logEl.textContent = '';
         resultEl.textContent = 'Result: —';
+        progressTextEl.textContent = 'Progress: —';
+        progressFillEl.style.width = '0%';
         socket.emit('start', {
           rollNumber: rollNumberEl.value,
           startYear: Number(startYearEl.value),
@@ -247,6 +347,9 @@
         });
       });
       stopBtn.addEventListener('click', () => socket.emit('stop'));
+      foundOnlyEl.addEventListener('change', () => {
+        renderHistory(window.__historyItems || []);
+      });
 
       socket.on('status', ({ running }) => {
         statusEl.innerHTML = running
@@ -277,28 +380,23 @@
         resultEl.innerHTML = `<span class="error">Error: ${message}</span>`;
       });
 
+      socket.on('progress', (p) => {
+        const pct = p.total ? Math.min(100, Math.round((p.attempts / p.total) * 100)) : 0;
+        progressTextEl.textContent = `Progress: ${p.attempts}/${p.total} (${p.day}/${p.month}/${p.year})`;
+        progressFillEl.style.width = `${pct}%`;
+      });
+
       socket.on('history', (items) => {
-        historyListEl.innerHTML = '';
-        (items || []).forEach((item) => {
-          const started = item.startedAt ? new Date(item.startedAt).toLocaleString() : '';
-          const label = item.status || 'unknown';
-          const badge = `<span class="badge ${label}">${label.replace('_', ' ')}</span>`;
-          const line = document.createElement('div');
-          line.className = item.status === 'found' ? 'history-item found' : 'history-item';
-          const resultLine = item.result
-            ? `<div>Result: ${item.result.name} | ${item.result.applicationNumber} | ${item.result.dob || ''}</div>`
-            : '';
-          line.innerHTML = `
-            <div>
-              <strong>${item.rollNumber}</strong>
-              ${badge}
-            </div>
-            <div>${item.startMonth}/${item.startYear} - ${item.endMonth}/${item.endYear}</div>
-            ${resultLine}
-            <div>${started}</div>
-          `;
-          historyListEl.appendChild(line);
-        });
+        window.__historyItems = items || [];
+        renderHistory(window.__historyItems);
+      });
+
+      historyListEl.addEventListener('click', (e) => {
+        const target = e.target;
+        if (target && target.classList && target.classList.contains('resume-btn')) {
+          const id = target.getAttribute('data-id');
+          socket.emit('resume', { id });
+        }
       });
     </script>
   </body>

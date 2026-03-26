@@ -20,7 +20,9 @@ async function main(rollNumbers: string[]) {
           concurrency: 2,
           usePlaywright: USE_PLAYWRIGHT
         },
-        (message) => console.log(message)
+        (message) => console.log(message),
+        () => false,
+        (p) => console.log(`Progress ${p.attempts}/${p.total} (${p.day}/${p.month}/${p.year})`)
       );
       if (result) {
         results.push({

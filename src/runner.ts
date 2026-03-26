@@ -11,11 +11,13 @@ export interface RunOptions {
   startMonth: number;
   endMonth: number;
   concurrency: number;
+  startFrom?: { day: number; month: number; year: number };
   usePlaywright: boolean;
 }
 
 export type LogFn = (message: string) => void;
 export type IsCancelledFn = () => boolean;
+export type ProgressFn = (payload: { attempts: number; total: number; day: number; month: number; year: number }) => void;
 
 const REQUEST_DELAY_MS = 1200;
 const MAX_ATTEMPTS_PER_ROLL = 2000;
@@ -26,9 +28,10 @@ const withJitter = (ms: number) => ms + Math.floor(Math.random() * 250);
 export async function runDobSearch(
   options: RunOptions,
   log: LogFn,
-  isCancelled: IsCancelledFn = () => false
+  isCancelled: IsCancelledFn = () => false,
+  onProgress: ProgressFn = () => {}
 ): Promise<Student | null> {
-  const { rollNumber, startYear, endYear, startMonth, endMonth, concurrency, usePlaywright } = options;
+  const { rollNumber, startYear, endYear, startMonth, endMonth, concurrency, startFrom, usePlaywright } = options;
 
   if (isCancelled()) {
     log('Cancelled before start.');
@@ -58,11 +61,20 @@ export async function runDobSearch(
     for (let month = monthStart; month <= monthEnd; month++) {
       const daysInMonth = DateUtils.getDaysInMonth(month, year);
       for (let day = 1; day <= daysInMonth; day++) {
+        if (startFrom) {
+          const afterStart =
+            year > startFrom.year ||
+            (year === startFrom.year && (month > startFrom.month || (month === startFrom.month && day >= startFrom.day)));
+          if (!afterStart) {
+            continue;
+          }
+        }
         dates.push({ day, month, year });
       }
     }
   }
 
+  const total = dates.length;
   let index = 0;
   let foundResult: Student | null = null;
   const workerCount = Math.max(1, Math.min(concurrency, 3));
@@ -88,6 +100,7 @@ export async function runDobSearch(
       }
 
       const { day, month, year } = dates[currentIndex];
+      onProgress({ attempts, total, day, month, year });
       log(`Trying date: ${day}/${month}/${year}`);
       try {
         const parseResult = usePlaywright

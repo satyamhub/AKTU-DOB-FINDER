@@ -21,6 +21,7 @@ export interface ViewStateParams {
 }
 
 export interface SearchHistory {
+  user?: string;
   rollNumber: string;
   startYear: number;
   endYear: number;
@@ -30,6 +31,8 @@ export interface SearchHistory {
   status: 'running' | 'found' | 'not_found' | 'invalid' | 'error' | 'cancelled';
   startedAt: Date;
   finishedAt?: Date;
+  attempts?: number;
+  lastProgress?: { day: number; month: number; year: number };
   result?: {
     name: string;
     applicationNumber: string;
