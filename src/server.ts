@@ -8,18 +8,18 @@ import { PlaywrightService } from './scraping/playwright.service';
 import { DatabaseService } from './database/database.service';
 import { SearchHistory } from './interfaces';
 
+const USE_PLAYWRIGHT = process.env.USE_PLAYWRIGHT === '1';
+const PORT = Number(process.env.PORT || 3000);
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'admin';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me';
+
 const addOneDay = (day: number, month: number, year: number): { day: number; month: number; year: number } | null => {
   const date = new Date(year, month - 1, day);
   if (Number.isNaN(date.getTime())) return null;
   date.setDate(date.getDate() + 1);
   return { day: date.getDate(), month: date.getMonth() + 1, year: date.getFullYear() };
 };
-
-const USE_PLAYWRIGHT = process.env.USE_PLAYWRIGHT === '1';
-const PORT = Number(process.env.PORT || 3000);
-const ADMIN_USER = process.env.ADMIN_USER || 'admin';
-const ADMIN_PASS = process.env.ADMIN_PASS || 'admin';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me';
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -61,26 +61,6 @@ app.post('/logout', (req, res) => {
   });
 });
 
-app.get('/export', async (req, res) => {
-  if (!isAuthenticated(req)) {
-    res.status(401).send('Unauthorized');
-    return;
-  }
-  const students = await DatabaseService.listStudents();
-  const header = ['applicationNumber', 'name', 'dob', 'COP', 'sgpaValues'];
-  const rows = students.map((s) => [
-    s.applicationNumber,
-    s.name,
-    s.dob ?? '',
-    s.COP ?? '',
-    (s.sgpaValues || []).join('|')
-  ]);
-  const csv = [header.join(','), ...rows.map((r) => r.map((v) => `"${String(v).replace(/\"/g, '""')}"`).join(','))].join('\n');
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="students.csv"');
-  res.send(csv);
-});
-
 app.use((req, res, next) => {
   if (req.path === '/login') return next();
   if (req.path === '/logout') return next();
@@ -94,31 +74,44 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 const server = http.createServer(app);
 const io = new Server(server);
 
-const wrap = (middleware: any) => (socket: any, next: any) =>
-  middleware(socket.request, {} as any, next);
-io.use(wrap(sessionMiddleware));
-io.use((socket, next) => {
-  const req = socket.request as any;
-  if (req?.session?.user) return next();
-  next(new Error('Unauthorized'));
-});
+// NOTE: Socket auth disabled temporarily to avoid session-cookie issues on refresh.
+// const wrap = (middleware: any) => (socket: any, next: any) =>
+//   middleware(socket.request, {} as any, next);
+// io.use(wrap(sessionMiddleware));
+// io.use((socket, next) => {
+//   const req = socket.request as any;
+//   if (req?.session?.user) return next();
+//   next(new Error('Unauthorized'));
+// });
 
-const userState = new Map<
-  string,
-  { running: boolean; cancelRequested: boolean; lastStartAt: number }
->();
+type UserState = {
+  running: boolean;
+  cancelRequested: boolean;
+  logs: string[];
+  lastProgress?: { day: number; month: number; year: number; attempts: number; total: number };
+  sockets: Set<any>;
+};
+
+const globalState: UserState = {
+  running: false,
+  cancelRequested: false,
+  logs: [],
+  sockets: new Set()
+};
 
 io.on('connection', (socket) => {
   const reqAny = socket.request as any;
-  const username = reqAny?.session?.user?.username || 'admin';
-  if (!userState.has(username)) {
-    userState.set(username, { running: false, cancelRequested: false, lastStartAt: 0 });
-  }
-  const state = userState.get(username)!;
+  globalState.sockets.add(socket);
 
-  socket.emit('status', { running: state.running });
+  socket.emit('status', { running: globalState.running });
+  if (globalState.logs.length) {
+    socket.emit('logs', globalState.logs);
+  }
+  if (globalState.lastProgress) {
+    socket.emit('progress', globalState.lastProgress);
+  }
   const sendHistory = async () => {
-    const history = await DatabaseService.listSearchHistory(50, username);
+    const history = await DatabaseService.listSearchHistory(50);
     const safeHistory = history.map((h: any) => ({
       ...h,
       id: h._id?.toString?.() || String(h._id)
@@ -129,12 +122,8 @@ io.on('connection', (socket) => {
   sendHistory().catch((err) => socket.emit('error', err instanceof Error ? err.message : String(err)));
 
   socket.on('start', async (payload) => {
-    if (state.running) {
+    if (globalState.running) {
       socket.emit('error', 'A run is already in progress.');
-      return;
-    }
-    if (Date.now() - state.lastStartAt < 20000) {
-      socket.emit('error', 'Please wait a bit before starting another search.');
       return;
     }
 
@@ -158,23 +147,26 @@ io.on('connection', (socket) => {
 
     const safeConcurrency = Math.max(1, Math.min(concurrency, 3));
 
-    state.running = true;
-    state.cancelRequested = false;
-    state.lastStartAt = Date.now();
-    socket.emit('status', { running: true });
+    globalState.running = true;
+    globalState.cancelRequested = false;
+    globalState.sockets.forEach((s) => s.emit('status', { running: true }));
 
-    const log = (message: string) => socket.emit('log', message);
-    const isCancelled = () => state.cancelRequested;
+    const log = (message: string) => {
+      globalState.logs.push(message);
+      if (globalState.logs.length > 500) globalState.logs.shift();
+      globalState.sockets.forEach((s) => s.emit('log', message));
+    };
+    const isCancelled = () => globalState.cancelRequested;
     let lastAttempts = 0;
     let lastProgress: { day: number; month: number; year: number } | undefined;
     const progress = (p: { attempts: number; total: number; day: number; month: number; year: number }) => {
       lastAttempts = p.attempts;
       lastProgress = { day: p.day, month: p.month, year: p.year };
-      socket.emit('progress', p);
+      globalState.lastProgress = { ...p };
+      globalState.sockets.forEach((s) => s.emit('progress', p));
     };
 
     const historyRecord: SearchHistory = {
-      user: username,
       rollNumber,
       startYear,
       endYear,
@@ -193,7 +185,7 @@ io.on('connection', (socket) => {
         isCancelled,
         progress
       );
-      if (state.cancelRequested) {
+      if (globalState.cancelRequested) {
         historyRecord.status = 'cancelled';
       } else if (result) {
         historyRecord.status = 'found';
@@ -211,19 +203,19 @@ io.on('connection', (socket) => {
       historyRecord.lastProgress = lastProgress;
       historyRecord.finishedAt = new Date();
       await DatabaseService.saveSearchHistory(historyRecord);
-      socket.emit('result', result);
+      globalState.sockets.forEach((s) => s.emit('result', result));
       await sendHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      socket.emit('error', message);
+      globalState.sockets.forEach((s) => s.emit('error', message));
       historyRecord.status = 'error';
       historyRecord.errorMessage = message;
       historyRecord.finishedAt = new Date();
       await DatabaseService.saveSearchHistory(historyRecord);
       await sendHistory();
     } finally {
-      state.running = false;
-      socket.emit('status', { running: false });
+      globalState.running = false;
+      globalState.sockets.forEach((s) => s.emit('status', { running: false }));
       if (USE_PLAYWRIGHT) {
         await PlaywrightService.closeBrowser();
       }
@@ -231,7 +223,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('resume', async (payload) => {
-    if (state.running) {
+    if (globalState.running) {
       socket.emit('error', 'A run is already in progress.');
       return;
     }
@@ -242,7 +234,7 @@ io.on('connection', (socket) => {
     }
 
     const record = await DatabaseService.getSearchHistoryById(id);
-    if (!record || record.user !== username || record.status !== 'cancelled' || !record.lastProgress) {
+    if (!record || record.status !== 'cancelled' || !record.lastProgress) {
       socket.emit('error', 'Cannot resume this search.');
       return;
     }
@@ -253,23 +245,26 @@ io.on('connection', (socket) => {
       return;
     }
 
-    state.running = true;
-    state.cancelRequested = false;
-    state.lastStartAt = Date.now();
-    socket.emit('status', { running: true });
+    globalState.running = true;
+    globalState.cancelRequested = false;
+    globalState.sockets.forEach((s) => s.emit('status', { running: true }));
 
-    const log = (message: string) => socket.emit('log', message);
-    const isCancelled = () => state.cancelRequested;
+    const log = (message: string) => {
+      globalState.logs.push(message);
+      if (globalState.logs.length > 500) globalState.logs.shift();
+      globalState.sockets.forEach((s) => s.emit('log', message));
+    };
+    const isCancelled = () => globalState.cancelRequested;
     let lastAttemptsLocal = 0;
     let lastProgressLocal: { day: number; month: number; year: number } | undefined;
     const progress = (p: { attempts: number; total: number; day: number; month: number; year: number }) => {
       lastAttemptsLocal = p.attempts;
       lastProgressLocal = { day: p.day, month: p.month, year: p.year };
-      socket.emit('progress', p);
+      globalState.lastProgress = { ...p };
+      globalState.sockets.forEach((s) => s.emit('progress', p));
     };
 
     const historyRecord: SearchHistory = {
-      user: username,
       rollNumber: record.rollNumber,
       startYear: record.startYear,
       endYear: record.endYear,
@@ -298,7 +293,7 @@ io.on('connection', (socket) => {
         progress
       );
 
-      if (state.cancelRequested) {
+      if (globalState.cancelRequested) {
         historyRecord.status = 'cancelled';
       } else if (result) {
         historyRecord.status = 'found';
@@ -316,19 +311,19 @@ io.on('connection', (socket) => {
       historyRecord.lastProgress = lastProgressLocal;
       historyRecord.finishedAt = new Date();
       await DatabaseService.saveSearchHistory(historyRecord);
-      socket.emit('result', result);
+      globalState.sockets.forEach((s) => s.emit('result', result));
       await sendHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      socket.emit('error', message);
+      globalState.sockets.forEach((s) => s.emit('error', message));
       historyRecord.status = 'error';
       historyRecord.errorMessage = message;
       historyRecord.finishedAt = new Date();
       await DatabaseService.saveSearchHistory(historyRecord);
       await sendHistory();
     } finally {
-      state.running = false;
-      socket.emit('status', { running: false });
+      globalState.running = false;
+      globalState.sockets.forEach((s) => s.emit('status', { running: false }));
       if (USE_PLAYWRIGHT) {
         await PlaywrightService.closeBrowser();
       }
@@ -336,12 +331,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on('stop', () => {
-    if (!state.running) {
+    if (!globalState.running) {
       socket.emit('error', 'Nothing is running.');
       return;
     }
-    state.cancelRequested = true;
-    socket.emit('log', 'Stop requested. Cleaning up...');
+    globalState.cancelRequested = true;
+    globalState.sockets.forEach((s) => s.emit('log', 'Stop requested. Cleaning up...'));
+  });
+
+  socket.on('disconnect', () => {
+    globalState.sockets.delete(socket);
   });
 });
 

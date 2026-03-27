@@ -44,21 +44,6 @@
         border-radius: 8px;
         cursor: pointer;
       }
-      .toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      .export {
-        background: #0b1220;
-        border: 1px solid var(--border);
-        color: var(--text);
-        padding: 8px 12px;
-        border-radius: 8px;
-        cursor: pointer;
-        text-decoration: none;
-        font-size: 13px;
-      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
@@ -72,15 +57,6 @@
         border: 1px solid var(--border);
         border-radius: 10px;
         padding: 12px;
-        font-size: 12px;
-      }
-      .history-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 6px;
-        margin-bottom: 8px;
-        color: var(--muted);
         font-size: 12px;
       }
       .history-item {
@@ -213,12 +189,9 @@
     <div class="container">
       <div class="header">
         <div class="title">AKTU DOB Finder Live</div>
-        <div class="toolbar">
-          <a class="export" href="/export">Export CSV</a>
-          <form method="post" action="/logout">
-            <button class="logout" type="submit">Logout</button>
-          </form>
-        </div>
+        <form method="post" action="/logout">
+          <button class="logout" type="submit">Logout</button>
+        </form>
       </div>
 
       <div class="panel">
@@ -267,10 +240,6 @@
         <div class="log" id="log"></div>
         <div class="history" id="history">
           <strong>Recent Searches</strong>
-          <div class="history-controls">
-            <input id="foundOnly" type="checkbox" />
-            <label for="foundOnly">Show found only</label>
-          </div>
           <div id="historyList"></div>
         </div>
       </div>
@@ -287,7 +256,6 @@
       const historyListEl = document.getElementById('historyList');
       const progressTextEl = document.getElementById('progressText');
       const progressFillEl = document.getElementById('progressFill');
-      const foundOnlyEl = document.getElementById('foundOnly');
 
       const rollNumberEl = document.getElementById('rollNumber');
       const startYearEl = document.getElementById('startYear');
@@ -302,10 +270,8 @@
       };
 
       const renderHistory = (items) => {
-        const foundOnly = foundOnlyEl.checked;
         historyListEl.innerHTML = '';
         (items || []).forEach((item) => {
-          if (foundOnly && item.status !== 'found') return;
           const started = item.startedAt ? new Date(item.startedAt).toLocaleString() : '';
           const label = item.status || 'unknown';
           const badge = `<span class="badge ${label}">${label.replace('_', ' ')}</span>`;
@@ -347,9 +313,6 @@
         });
       });
       stopBtn.addEventListener('click', () => socket.emit('stop'));
-      foundOnlyEl.addEventListener('change', () => {
-        renderHistory(window.__historyItems || []);
-      });
 
       socket.on('status', ({ running }) => {
         statusEl.innerHTML = running
@@ -360,6 +323,11 @@
       });
 
       socket.on('log', (message) => appendLog(message));
+
+      socket.on('logs', (lines) => {
+        logEl.textContent = '';
+        (lines || []).forEach((line) => appendLog(line));
+      });
 
       socket.on('result', (result) => {
         if (result) {
